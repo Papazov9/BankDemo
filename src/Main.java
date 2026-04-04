@@ -1,58 +1,117 @@
-import model.BankAccount;
-import model.SavingsAccount;
+import exception.*;
+import model.*;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
 
 public class Main {
     public static void main(String[] args) {
-        System.out.println("=== BankAccount Tests ===");
 
-        BankAccount alice = new BankAccount("Alice");
-        BankAccount bob = new BankAccount("Bob");
+        Bank bank = new Bank("DemoBank");
+        bank.setWithdrawalFee(new BigDecimal("0.50"));
+        bank.setOverdraftFee(new BigDecimal("25.00"));
 
-        System.out.println("Owner: " + alice.getOwner());
-        System.out.println("Initial balance: " + alice.getBalance());
+        Customer alice   = bank.registerCustomer("Alice");
+        Customer bob     = bank.registerCustomer("Bob");
+        Customer charlie = bank.registerCustomer("Charlie");
 
-        alice.deposit(500);
-        alice.deposit(-100);
+        BankAccount aliceChecking = bank.openCheckingAccount(alice, new BigDecimal("200"));
+        BankAccount bobChecking   = bank.openCheckingAccount(bob);
+        SavingsAccount charlieSavings = bank.openSavingsAccount(charlie, 0.05);
 
-        alice.withdraw(200);
-        alice.withdraw(1000);
-        alice.withdraw(-50);
+        aliceChecking.setDailyWithdrawalLimit(new BigDecimal("1000"));
+        charlieSavings.setMaximumBalance(new BigDecimal("50000"));
 
-        System.out.println("Alice balance after operations: " + alice.getBalance());
+        bank.listAccounts().forEach(a ->
+                System.out.println("  " + a.getAccountNumber() + " | "
+                        + a.getOwner() + " | " + a.getClass().getSimpleName()));
 
-        bob.deposit(100);
-        alice.transferTo(bob, 150);
-        System.out.println("Alice after transfer: " + alice.getBalance());
-        System.out.println("Bob after transfer: " + bob.getBalance());
 
-        alice.transferTo(bob, 9999);
+        bank.deposit(aliceChecking.getAccountNumber(), new BigDecimal("500"));
+        System.out.println("After deposit 500: " + aliceChecking.getBalance());
 
-        System.out.println();
-        System.out.println("=== SavingsAccount Tests ===");
+        bank.withdraw(aliceChecking.getAccountNumber(), new BigDecimal("600"));
+        System.out.println("After withdraw 600 (overdraft): " + aliceChecking.getBalance());
 
-        SavingsAccount savings = new SavingsAccount("Charlie", 0.05);
-        System.out.println("Savings owner: " + savings.getOwner());
-        System.out.println("Savings initial balance: " + savings.getBalance());
+        try {
+            bank.withdraw(aliceChecking.getAccountNumber(), new BigDecimal("200"));
+        } catch (OverdraftLimitExceededException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
 
-        savings.deposit(1000);
+        bank.deposit(bobChecking.getAccountNumber(), new BigDecimal("100"));
+        bank.deposit(aliceChecking.getAccountNumber(), new BigDecimal("300"));
+        bank.transfer(aliceChecking.getAccountNumber(), bobChecking.getAccountNumber(), new BigDecimal("50"));
+        System.out.println("Alice after transfer: " + aliceChecking.getBalance());
+        System.out.println("Bob after transfer:   " + bobChecking.getBalance());
 
-        double newBalance = savings.applyInterest();
-        System.out.println("Balance after interest: " + newBalance);
+        bank.deposit(charlieSavings.getAccountNumber(), new BigDecimal("1000"));
 
-        newBalance = savings.applyInterest();
-        System.out.println("Balance after 2nd interest: " + newBalance);
+        BigDecimal afterInterest = charlieSavings.applyInterest(CompoundingMode.MONTHLY);
+        System.out.println("After monthly interest: " + afterInterest);
 
-        savings.withdraw(100);
-        System.out.println("Savings after withdraw: " + savings.getBalance());
+        afterInterest = charlieSavings.applyInterest(CompoundingMode.YEARLY);
+        System.out.println("After yearly interest:  " + afterInterest);
 
-        System.out.println();
-        System.out.println("=== Summary ===");
-        System.out.println("Alice: " + alice.getBalance());
-        System.out.println("Bob: " + bob.getBalance());
-        System.out.println("Charlie (savings): " + savings.getBalance());
+        try {
+            bank.withdraw(charlieSavings.getAccountNumber(), new BigDecimal("99999"));
+        } catch (InsufficientFundsException e) {
+            System.out.println("Expected (no overdraft): " + e.getMessage());
+        }
 
-        alice.printTransactionHistory();
-        bob.printTransactionHistory();
-        savings.printTransactionHistory();
+        bank.deposit(aliceChecking.getAccountNumber(), new BigDecimal("5000"));
+        try {
+            bank.withdraw(aliceChecking.getAccountNumber(), new BigDecimal("900"));
+        } catch (DailyLimitExceededException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        try {
+            bank.deposit(aliceChecking.getAccountNumber(), new BigDecimal("-50"));
+        } catch (IllegalArgumentException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        try {
+            bank.findAccount("ACC-999999");
+        } catch (AccountNotFoundException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        try {
+            aliceChecking.transferTo(aliceChecking, new BigDecimal("10"));
+        } catch (IllegalArgumentException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        charlieSavings.setMaximumBalance(new BigDecimal("1100"));
+        try {
+            bank.deposit(charlieSavings.getAccountNumber(), new BigDecimal("9999"));
+        } catch (MaximumBalanceExceededException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        Statement stmt = bank.generateStatement(
+                aliceChecking.getAccountNumber(),
+                LocalDate.now().minusDays(1),
+                LocalDate.now());
+        System.out.println(stmt);
+
+        bank.closeAccount(bobChecking.getAccountNumber());
+        System.out.println("Accounts remaining: " + bank.getAccountCount());
+
+        try {
+            bank.findAccount(bobChecking.getAccountNumber());
+        } catch (AccountNotFoundException e) {
+            System.out.println("Expected: " + e.getMessage());
+        }
+
+        System.out.println(alice + " → accounts: " + alice.getAccounts().size());
+        System.out.println(bob   + " → accounts: " + bob.getAccounts().size());
+
+        bank.listAccounts().forEach(a -> {
+            System.out.println(a.getOwner() + " (" + a.getAccountNumber() + "):");
+            a.getTransactionHistory().forEach(t -> System.out.println("  " + t));
+        });
     }
 }
